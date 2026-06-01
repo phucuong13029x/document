@@ -158,13 +158,14 @@ ufw allow 443/tcp
 Internal Only:
 
 ```bash
-ufw allow from 10.10.0.0/16 to any port 22
+ufw allow from 10.10.0.0/16 to any port 22 hoặc ufw allow from 10.10.26.174 to any port 22
 ufw allow from 10.10.0.0/16 to any port 3000
 ufw allow from 10.10.0.0/16 to any port 3100
 ufw allow from 10.10.0.0/16 to any port 4333
 ufw allow from 10.10.0.0/16 to any port 5000
 ufw allow from 10.10.0.0/16 to any port 8080
 ufw allow from 10.10.0.0/16 to any port 9090
+...
 ```
 
 Enable:
@@ -584,6 +585,3 @@ Fail2Ban:
 WAF:
 
 * Enabled
-
-```
-```
