@@ -1,15 +1,17 @@
 # Linux Web Server Security Baseline
 
-## Ubuntu & Oracle Linux + Nginx Reverse Proxy
+## Ubuntu / Oracle Linux + Nginx Reverse Proxy
 
-Version: 1.0
-Last Updated: 2026-06-01
+**Version:** 2.0
+**Last Updated:** 2026-06-02
 
 ---
 
-# 1. Mục tiêu
+# 1. Overview
 
-Tài liệu này mô tả cấu hình chuẩn nhằm bảo vệ các máy chủ web public internet:
+Tài liệu này mô tả bộ tiêu chuẩn bảo mật (Security Baseline) dành cho các máy chủ Web Public Internet.
+
+Áp dụng cho:
 
 * Ubuntu Server
 * Oracle Linux
@@ -22,56 +24,59 @@ Tài liệu này mô tả cấu hình chuẩn nhằm bảo vệ các máy chủ 
 
 Mục tiêu:
 
-* Giảm thiểu tấn công từ Internet
-* Chặn scanner và bot
+* Giảm thiểu bề mặt tấn công
+* Chặn scanner và bot tự động
 * Chặn brute force
 * Chặn truy cập trái phép
-* Giảm nguy cơ khai thác lỗ hổng
-* Chuẩn hóa cấu hình nhiều website
+* Chuẩn hóa cấu hình hệ thống
+* Đáp ứng yêu cầu vận hành môi trường Production/UAT
 
 ---
 
-# 2. Kiến trúc bảo mật
+# 2. Security Architecture
 
 ```text
 Internet
     │
     ▼
-Firewall (UFW / Firewalld)
+Firewall
+(UFW / Firewalld)
     │
     ▼
 Nginx Reverse Proxy
     │
-    ├── Rate Limit
+    ├── TLS Hardening
     ├── Security Headers
-    ├── URL Block
-    ├── User-Agent Filter
     ├── Host Validation
-    └── WAF (ModSecurity)
+    ├── Rate Limit
+    ├── Connection Limit
+    ├── Scanner Blocking
+    ├── ModSecurity WAF
+    └── Fail2Ban
     │
     ▼
-Application
+Application Layer
 (Gunicorn / NodeJS / Docker)
     │
     ▼
-Database
+Database Layer
 (MySQL / PostgreSQL)
 ```
 
 ---
 
-# 3. Hệ điều hành
+# 3. Operating System Hardening
 
-## Cập nhật hệ thống
+## Update System
 
-Ubuntu
+### Ubuntu
 
 ```bash
 apt update
 apt upgrade -y
 ```
 
-Oracle Linux
+### Oracle Linux
 
 ```bash
 dnf update -y
@@ -79,9 +84,9 @@ dnf update -y
 
 ---
 
-## Cài đặt công cụ bảo mật
+## Install Security Packages
 
-Ubuntu
+### Ubuntu
 
 ```bash
 apt install -y \
@@ -89,12 +94,13 @@ fail2ban \
 curl \
 wget \
 vim \
-net-tools \
 htop \
-rsyslog
+net-tools \
+rsyslog \
+unzip
 ```
 
-Oracle Linux
+### Oracle Linux
 
 ```bash
 dnf install -y \
@@ -102,16 +108,15 @@ fail2ban \
 curl \
 wget \
 vim \
-net-tools \
 htop \
-rsyslog
+net-tools \
+rsyslog \
+unzip
 ```
 
 ---
 
-# 4. Hardening SSH
-
-## Chỉ cho phép SSH bằng Key
+# 4. SSH Hardening
 
 File:
 
@@ -119,62 +124,104 @@ File:
 /etc/ssh/sshd_config
 ```
 
-Thiết lập:
+Cấu hình:
 
 ```ini
 PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
+
 MaxAuthTries 3
 LoginGraceTime 30
+
+AllowTcpForwarding no
+X11Forwarding no
 ```
 
-Khởi động lại:
+Restart:
 
 ```bash
 systemctl restart sshd
 ```
 
+Kiểm tra:
+
+```bash
+sshd -t
+```
+
 ---
 
-# 5. Firewall
+# 5. Linux Kernel Hardening
+
+File:
+
+```text
+/etc/sysctl.d/99-security.conf
+```
+
+```ini
+net.ipv4.tcp_syncookies = 1
+
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+kernel.randomize_va_space = 2
+```
+
+Apply:
+
+```bash
+sysctl --system
+```
+
+---
+
+# 6. Firewall
 
 ## Ubuntu UFW
 
-Mặc định:
+Default Policy
 
 ```bash
 ufw default deny incoming
 ufw default allow outgoing
 ```
 
-Public:
+Public Services
 
 ```bash
 ufw allow 80/tcp
 ufw allow 443/tcp
 ```
 
-Internal Only:
+Internal Services
 
 ```bash
-ufw allow from 10.10.0.0/16 to any port 22 hoặc ufw allow from 10.10.26.174 to any port 22
+ufw allow from 10.10.0.0/16 to any port 22
 ufw allow from 10.10.0.0/16 to any port 3000
 ufw allow from 10.10.0.0/16 to any port 3100
 ufw allow from 10.10.0.0/16 to any port 4333
 ufw allow from 10.10.0.0/16 to any port 5000
 ufw allow from 10.10.0.0/16 to any port 8080
 ufw allow from 10.10.0.0/16 to any port 9090
-...
 ```
 
-Enable:
+Enable
 
 ```bash
 ufw enable
 ```
 
-Kiểm tra:
+Verify
 
 ```bash
 ufw status verbose
@@ -184,47 +231,45 @@ ufw status verbose
 
 ## Oracle Linux Firewalld
 
-Public:
+Public
 
 ```bash
 firewall-cmd --permanent --add-service=http
 firewall-cmd --permanent --add-service=https
 ```
 
-Internal:
+SSH Internal
 
 ```bash
 firewall-cmd --permanent \
 --add-rich-rule='rule family="ipv4" source address="10.10.0.0/16" service name="ssh" accept'
-
-firewall-cmd --permanent \
---add-rich-rule='rule family="ipv4" source address="10.10.0.0/16" port port="3000" protocol="tcp" accept'
-
-firewall-cmd --permanent \
---add-rich-rule='rule family="ipv4" source address="10.10.0.0/16" port port="3100" protocol="tcp" accept'
-
-firewall-cmd --permanent \
---add-rich-rule='rule family="ipv4" source address="10.10.0.0/16" port port="4333" protocol="tcp" accept'
-
-firewall-cmd --permanent \
---add-rich-rule='rule family="ipv4" source address="10.10.0.0/16" port port="5000" protocol="tcp" accept'
-
-firewall-cmd --permanent \
---add-rich-rule='rule family="ipv4" source address="10.10.0.0/16" port port="8080" protocol="tcp" accept'
-
-firewall-cmd --permanent \
---add-rich-rule='rule family="ipv4" source address="10.10.0.0/16" port port="9090" protocol="tcp" accept'
 ```
 
-Reload:
+Application Ports
+
+```bash
+for p in 3000 3100 4333 5000 8080 9090
+do
+firewall-cmd --permanent \
+--add-rich-rule="rule family='ipv4' source address='10.10.0.0/16' port port='$p' protocol='tcp' accept"
+done
+```
+
+Reload
 
 ```bash
 firewall-cmd --reload
 ```
 
+Verify
+
+```bash
+firewall-cmd --list-all
+```
+
 ---
 
-# 6. Nginx Global Configuration
+# 7. Nginx Global Configuration
 
 File:
 
@@ -241,17 +286,17 @@ limit_conn_zone $binary_remote_addr zone=addr:20m;
 
 ---
 
-## Block Bad User Agent
+## Block Bad User-Agent
 
 ```nginx
 map $http_user_agent $bad_ua {
     default 0;
 
-    ~*(masscan) 1;
-    ~*(zgrab) 1;
     ~*(sqlmap) 1;
     ~*(nikto) 1;
     ~*(wpscan) 1;
+    ~*(masscan) 1;
+    ~*(zgrab) 1;
     ~*(nmap) 1;
     ~*(acunetix) 1;
     ~*(netsparker) 1;
@@ -260,6 +305,8 @@ map $http_user_agent $bad_ua {
 
     ~*(python-requests) 1;
     ~*(go-http-client) 1;
+    ~*(curl/) 1;
+    ~*(wget/) 1;
 }
 ```
 
@@ -269,7 +316,6 @@ map $http_user_agent $bad_ua {
 
 ```nginx
 map $request_uri $bad_ext {
-
     default 0;
 
     ~*\.env$ 1;
@@ -285,9 +331,9 @@ map $request_uri $bad_ext {
 
 ---
 
-# 7. Nginx Common Security Rules
+# 8. Common Security Rules
 
-File:
+File
 
 ```text
 /etc/nginx/security/common-security.conf
@@ -305,13 +351,17 @@ if ($bad_ua) {
 if ($host ~ "^[0-9.]+$") {
     return 444;
 }
+
+if ($request_method !~ ^(GET|POST|PUT|DELETE|OPTIONS|HEAD)$) {
+    return 405;
+}
 ```
 
 ---
 
-# 8. Chặn URL Scan
+# 9. Common URL Blocking
 
-File:
+File
 
 ```text
 /etc/nginx/security/common-block.conf
@@ -326,22 +376,51 @@ location ~* ^/(phpmyadmin|pma|adminer) {
     return 444;
 }
 
+location ~* ^/(vendor|storage|phpunit) {
+    return 444;
+}
+
 location ~* ^/(jenkins|manager/html|actuator) {
     return 444;
 }
 
-location ~* ^/(vendor|storage|phpunit|cgi-bin) {
+location ~* ^/(HNAP1|nmap|sdk|evox|cgi-bin|boaform) {
+    return 444;
+}
+
+location = /onvif/device_service {
     return 444;
 }
 ```
 
 ---
 
-# 9. Site Template
+# 10. Default Server Protection
 
 ```nginx
 server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
 
+server {
+    listen 443 ssl default_server;
+    server_name _;
+
+    ssl_certificate /etc/nginx/ssl/default.crt;
+    ssl_certificate_key /etc/nginx/ssl/default.key;
+
+    return 444;
+}
+```
+
+---
+
+# 11. Site Template
+
+```nginx
+server {
     listen 80;
     server_name app.example.com;
 
@@ -351,8 +430,10 @@ server {
 server {
 
     listen 443 ssl http2;
-
     server_name app.example.com;
+
+    ssl_certificate /etc/nginx/ssl/star.crt;
+    ssl_certificate_key /etc/nginx/ssl/star.key;
 
     ssl_protocols TLSv1.2 TLSv1.3;
 
@@ -365,11 +446,18 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    add_header Content-Security-Policy "frame-ancestors 'self';" always;
+
+    add_header Strict-Transport-Security \
+    "max-age=31536000; includeSubDomains" always;
 
     location / {
 
         proxy_pass http://127.0.0.1:7080;
+
+        proxy_http_version 1.1;
 
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -381,7 +469,7 @@ server {
 
 ---
 
-# 10. Docker Security
+# 12. Docker Security
 
 Không nên:
 
@@ -404,9 +492,16 @@ ports:
   - "10.10.15.60:3000:3000"
 ```
 
+Kiểm tra:
+
+```bash
+docker ps
+docker inspect CONTAINER_ID
+```
+
 ---
 
-# 11. Database Security
+# 13. Database Security
 
 ## MySQL
 
@@ -415,7 +510,7 @@ bind-address=127.0.0.1
 mysqlx-bind-address=127.0.0.1
 ```
 
-Khởi động lại:
+Restart
 
 ```bash
 systemctl restart mysqld
@@ -429,7 +524,7 @@ systemctl restart mysqld
 listen_addresses='127.0.0.1'
 ```
 
-Khởi động lại:
+Restart
 
 ```bash
 systemctl restart postgresql
@@ -437,9 +532,9 @@ systemctl restart postgresql
 
 ---
 
-# 12. Fail2Ban
+# 14. Fail2Ban
 
-Tạo:
+File
 
 ```text
 /etc/fail2ban/jail.local
@@ -461,13 +556,13 @@ enabled = true
 enabled = true
 ```
 
-Restart:
+Restart
 
 ```bash
 systemctl restart fail2ban
 ```
 
-Kiểm tra:
+Verify
 
 ```bash
 fail2ban-client status
@@ -475,7 +570,7 @@ fail2ban-client status
 
 ---
 
-# 13. ModSecurity WAF
+# 15. ModSecurity WAF
 
 Ubuntu
 
@@ -489,19 +584,23 @@ Oracle Linux
 dnf install nginx-mod-modsecurity
 ```
 
-Triển khai OWASP CRS.
+Khuyến nghị triển khai:
+
+OWASP CRS
 
 Chặn:
 
 * SQL Injection
 * XSS
+* LFI
+* RFI
 * Path Traversal
-* RCE
 * Command Injection
+* Web Shell Upload
 
 ---
 
-# 14. Tắt Dịch Vụ Không Sử Dụng
+# 16. Disable Unused Services
 
 ```bash
 systemctl disable --now rpcbind
@@ -509,7 +608,7 @@ systemctl disable --now avahi-daemon
 systemctl disable --now snmpd
 ```
 
-Kiểm tra:
+Verify
 
 ```bash
 ss -tulnp
@@ -517,71 +616,137 @@ ss -tulnp
 
 ---
 
-# 15. Checklist Kiểm Tra Cuối
+# 17. Monitoring & Audit
 
-Kiểm tra firewall:
+SSH Failures
+
+Ubuntu
+
+```bash
+grep "Failed password" /var/log/auth.log
+```
+
+Oracle Linux
+
+```bash
+grep "Failed password" /var/log/secure
+```
+
+Top Connections
+
+```bash
+netstat -ntu | awk '{print $5}' \
+| cut -d: -f1 \
+| sort | uniq -c | sort -nr | head
+```
+
+Fail2Ban
+
+```bash
+fail2ban-client status
+```
+
+---
+
+# 18. Final Validation Checklist
+
+## Firewall
 
 ```bash
 ufw status verbose
 ```
 
-hoặc
+or
 
 ```bash
 firewall-cmd --list-all
 ```
 
-Kiểm tra nginx:
+## Nginx
 
 ```bash
 nginx -t
+systemctl reload nginx
 ```
 
-Kiểm tra port:
+## Open Ports
 
 ```bash
 ss -tulnp
 ```
 
-Kiểm tra từ bên ngoài:
+Expected Public Ports
 
-```bash
-nmap SERVER_IP
+```text
+80
+443
 ```
 
-Kết quả mong muốn:
+Expected Internal Ports
 
-Public:
+```text
+22
+3000
+3100
+4333
+5000
+8080
+9090
+```
 
-* 80
-* 443
+Expected Database
 
-Internal:
+```text
+127.0.0.1:3306
+127.0.0.1:5432
+```
 
-* 22
-* 3000
-* 3100
-* 4333
-* 5000
-* 8080
-* 9090
+## External Scan
 
-Database:
+```bash
+nmap -Pn SERVER_IP
+```
 
-* localhost only
+Expected Result
 
-Docker:
+```text
+80/tcp open
+443/tcp open
 
-* localhost/private IP only
+22/tcp filtered
+3000/tcp filtered
+3100/tcp filtered
+4333/tcp filtered
+5000/tcp filtered
+8080/tcp filtered
+9090/tcp filtered
+```
 
-SSH:
+---
 
-* Key Authentication Only
+# 19. Security Compliance Summary
 
-Fail2Ban:
+Required:
 
-* Enabled
+* OS Updated
+* Firewall Enabled
+* SSH Key Authentication
+* Nginx Rate Limit
+* Security Headers
+* Host Validation
+* Fail2Ban Enabled
+* ModSecurity Enabled
+* OWASP CRS Enabled
+* Database Localhost Only
+* Docker Internal Binding Only
 
-WAF:
+Recommended:
 
-* Enabled
+* Centralized Logging
+* SIEM Integration
+* Vulnerability Scanning
+* Quarterly Security Review
+* Penetration Testing
+
+```
+```
